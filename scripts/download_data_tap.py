@@ -54,8 +54,8 @@ def main():
         """,
         publicdata=True
     )
-    splus_tab.write()
-    
+    splus_tab.write("../data/splus_dr4.csv", overwrite=True)
+
     print("fetching gaia dr3")
     job = Gaia.launch_job_async("select "
         " "
@@ -73,6 +73,7 @@ def main():
     )
     
     r = job.get_results()
+    r.write("../data/gaia_dr3.csv", overwrite=True)
 
     return r
 
