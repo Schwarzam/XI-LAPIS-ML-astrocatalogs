@@ -1,41 +1,50 @@
 import splusdata
 from astroquery.gaia import Gaia
+import warnings
 
+# Suppress minor warnings from matplotlib or astroquery (if imported)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# Set Gaia query result limit to a high value
 Gaia.ROW_LIMIT = 999999
 
+# Define sky region (RA and DEC boundaries in degrees)
 ra = [-50, 50]
 dec = [-2, 2]
 
-
 def main():
-    print("reading splus dr4")
+    print("Reading S-PLUS DR4 data...")
+    
+    # Connect to the S-PLUS data API (public DR4)
     conn = splusdata.Core()
     
-    print("fetching for splus dr4")
+    print("Querying S-PLUS DR4 photometric and morphological data...")
+    
+    # Query S-PLUS DR4 for sources in the defined RA/DEC range
+    # Filters: r-band magnitude < 21, error < 0.03, and CLASS_STAR > 0.9 (likely stars)
     splus_tab = conn.query(
         f"""
         SELECT 
-        
-        det.id, det.ra, det.dec, det.field, det.B, det.A, det.class_star, det.theta, det.fwhm,
-        
-        r.e_r_pstotal, g.e_g_pstotal, i.e_i_pstotal, z.e_z_pstotal, u.e_u_pstotal,
-        j0378.e_j0378_pstotal, j0395.e_j0395_pstotal, j0410.e_j0410_pstotal,
-        j0430.e_j0430_pstotal, j0515.e_j0515_pstotal, j0660.e_j0660_pstotal, j0861.e_j0861_pstotal,
-        
-        r.r_pstotal, g.g_pstotal, i.i_pstotal, z.z_pstotal, u.u_pstotal,
-        j0378.j0378_pstotal, j0395.j0395_pstotal, j0410.j0410_pstotal, 
-        j0430.j0430_pstotal, j0515.j0515_pstotal, j0660.j0660_pstotal, j0861.j0861_pstotal
-        
-        
-        
+            det.id, det.ra, det.dec, det.field, det.B, det.A, det.class_star, det.theta, det.fwhm,
+
+            -- Photometric errors for all bands
+            r.e_r_pstotal, g.e_g_pstotal, i.e_i_pstotal, z.e_z_pstotal, u.e_u_pstotal,
+            j0378.e_j0378_pstotal, j0395.e_j0395_pstotal, j0410.e_j0410_pstotal,
+            j0430.e_j0430_pstotal, j0515.e_j0515_pstotal, j0660.e_j0660_pstotal, j0861.e_j0861_pstotal,
+
+            -- Fluxes/magnitudes for all bands
+            r.r_pstotal, g.g_pstotal, i.i_pstotal, z.z_pstotal, u.u_pstotal,
+            j0378.j0378_pstotal, j0395.j0395_pstotal, j0410.j0410_pstotal, 
+            j0430.j0430_pstotal, j0515.j0515_pstotal, j0660.j0660_pstotal, j0861.j0861_pstotal
+
         FROM "dr4_dual"."dr4_dual_detection" AS det 
         
+        -- Join with photometric tables for each filter
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_r" AS r ON r.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_g" AS g ON g.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_i" AS i ON i.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_z" AS z ON z.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_u" AS u ON u.id = det.id
-        
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_j0378" AS j0378 ON j0378.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_j0395" AS j0395 ON j0395.id = det.id
         LEFT OUTER JOIN "dr4_dual"."dr4_dual_j0410" AS j0410 ON j0410.id = det.id
@@ -47,18 +56,22 @@ def main():
         WHERE det.ra BETWEEN {ra[0]} AND {ra[1]}
         AND det.dec BETWEEN {dec[0]} AND {dec[1]}
 
+        -- Filters for quality and point-like objects
         AND r.r_pstotal < 21
         AND r.e_r_pstotal < 0.03
         AND CLASS_STAR > 0.9
-        
         """,
         publicdata=True
     )
+
+    # Save S-PLUS results to CSV
     splus_tab.write("../data/splus_dr4.csv", overwrite=True)
 
-    print("fetching gaia dr3")
-    job = Gaia.launch_job_async("select "
-        " "
+    print("Querying Gaia DR3 astrometric and photometric data...")
+
+    # Query Gaia DR3 for sources in the same region
+    job = Gaia.launch_job_async(
+        "SELECT "
         "source.source_id, source.ra, source.dec, "
         "source.parallax, source.parallax_error, "
         "source.phot_g_mean_mag, source.phot_bp_mean_mag, source.phot_rp_mean_mag, "
@@ -67,15 +80,17 @@ def main():
         "source.phot_g_mean_flux_error, source.phot_bp_mean_flux_error, source.phot_rp_mean_flux_error, "
         "source.bp_rp, source.bp_g, source.g_rp, "
         "source.phot_proc_mode "
-        "from gaiadr3.gaia_source as source "
-        f"where source.ra between {ra[0]} and {ra[1]} "
-        f"and source.dec between {dec[0]} and {dec[1]} "
+        "FROM gaiadr3.gaia_source AS source "
+        f"WHERE source.ra BETWEEN {ra[0]} AND {ra[1]} "
+        f"AND source.dec BETWEEN {dec[0]} AND {dec[1]}"
     )
-    
+
+    # Get Gaia results and save to CSV
     r = job.get_results()
     r.write("../data/gaia_dr3.csv", overwrite=True)
 
     return r
 
+# Run the main function
 if __name__ == "__main__":
     main()
