@@ -205,8 +205,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 Gaia.ROW_LIMIT = 999999
 
 # Define sky region (RA and DEC boundaries in degrees)
-ra = [-50, 50]
-dec = [-2, 2]
+ra = [-100, 100]
+dec = [-10, 2]
 
 def main():
     print("Reading S-PLUS DR4 data...")
@@ -214,7 +214,7 @@ def main():
     # Connect to the S-PLUS data API (public DR4)
     conn = splusdata.Core()
     
-    print("Querying S-PLUS DR4 photometric and morphological data...")
+    print("Querying S-PLUS DR4 data...")
     
     # Query S-PLUS DR4 for sources in the defined RA/DEC range
     # Filters: r-band magnitude < 21, error < 0.03, and CLASS_STAR > 0.9 (likely stars)
@@ -261,7 +261,7 @@ def main():
     )
 
 
-    print("Querying Gaia DR3 astrometric and photometric data...")
+    print("Querying Gaia DR3 data...")
 
     # Query Gaia DR3 for sources in the same region
     job = Gaia.launch_job_async(
@@ -270,7 +270,7 @@ def main():
         "source.parallax, source.parallax_error, "
         "source.phot_g_mean_mag, source.phot_bp_mean_mag, source.phot_rp_mean_mag, "
         "source.pseudocolour, source.phot_g_mean_flux, source.phot_bp_mean_flux, source.phot_rp_mean_flux, "
-        "source.teff_gspphot, "
+        "source.teff_gspphot, source.logg_gspphot, "
         "source.phot_g_mean_flux_error, source.phot_bp_mean_flux_error, source.phot_rp_mean_flux_error, "
         "source.bp_rp, source.bp_g, source.g_rp, "
         "source.phot_proc_mode "

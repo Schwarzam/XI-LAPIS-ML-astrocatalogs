@@ -61,6 +61,10 @@ def main():
         [-2, 2]
     ).compute()  # Convert lazy dask dataframe into in-memory pandas dataframe
 
+    # remove all suffixes from column names
+    table.columns = [col.split("_splus")[0] for col in table.columns]
+    table.columns = [col.split("_gaia")[0] for col in table.columns]
+
     # Save resulting matched table to CSV
     table.to_csv("../data/splus_gaia.csv", index=False)
     print("Done. Result saved to splus_gaia.csv.")
