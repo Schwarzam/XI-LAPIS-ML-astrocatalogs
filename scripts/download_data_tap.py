@@ -2,6 +2,202 @@ import splusdata
 from astroquery.gaia import Gaia
 import warnings
 
+import numpy as np
+import time
+import warnings
+
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astropy.table import hstack, vstack, Table, join
+from astropy.time import Time
+
+def inner_merge_tables(
+    t1, 
+    t2, 
+    t1_coord_cols=["ra", "dec"], 
+    t2_coord_cols=["ALPHA_J2000", "DELTA_J2000"], 
+    sep=1,
+    add_metadata=True,
+    match_prefix=""
+):
+    """
+    Merge two tables based on sky coordinate matching, keeping only matched rows.
+    
+    This function performs an inner join between two tables based on spatial proximity
+    of celestial coordinates. Only rows that have a match within the specified separation
+    limit are included in the output.
+    
+    Parameters
+    ----------
+    t1 : astropy.table.Table
+        First table (reference table)
+    t2 : astropy.table.Table
+        Second table (table to match)
+    t1_coord_cols : list, optional
+        Column names for RA and Dec in the first table, by default ["ra", "dec"]
+    t2_coord_cols : list, optional
+        Column names for RA and Dec in the second table, by default ["ALPHA_J2000", "DELTA_J2000"]
+    sep : float, optional
+        Maximum separation in arcseconds for a valid match, by default 1
+    t1_epoch : str, optional
+        Epoch of coordinates in first table, by default "J2000"
+    add_metadata : bool, optional
+        Whether to add merge metadata to the output table, by default True
+    match_prefix : str, optional
+        Prefix for match quality columns added to the output, by default "match_"
+    
+    Returns
+    -------
+    astropy.table.Table
+        Merged table containing only rows that match between the two input tables
+    
+    Notes
+    -----
+    - The matching is performed using the astropy.coordinates.SkyCoord.match_to_catalog_sky method
+    - Column name conflicts are handled by appending '_1' and '_2' suffixes
+    - A separation column is added to the output table showing the distance between matched pairs
+    """
+    start_time = time.time()
+    
+
+    # Check for empty tables
+    if len(t1) == 0:
+        raise ValueError("First table is empty")
+    
+    if len(t2) == 0:
+        raise ValueError("Second table is empty")
+    
+    # Check for required columns
+    for table_name, table, cols in [("First", t1, t1_coord_cols), ("Second", t2, t2_coord_cols)]:
+        for col in cols:
+            if col not in table.colnames:
+                raise ValueError(f"{table_name} table is missing required column: {col}")
+    
+    
+    # Create SkyCoord objects
+    try:
+        
+        # Suppress warnings about NaN values in coordinates
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            # Extract coordinate arrays, handling potential issues
+            t1_ra = np.array(t1[t1_coord_cols[0]], dtype=float)
+            t1_dec = np.array(t1[t1_coord_cols[1]], dtype=float)
+            t2_ra = np.array(t2[t2_coord_cols[0]], dtype=float)
+            t2_dec = np.array(t2[t2_coord_cols[1]], dtype=float)
+            
+            # Check for NaN values
+            t1_nan_mask = np.isnan(t1_ra) | np.isnan(t1_dec)
+            t2_nan_mask = np.isnan(t2_ra) | np.isnan(t2_dec)
+            
+            t1_nan_count = np.sum(t1_nan_mask)
+            t2_nan_count = np.sum(t2_nan_mask)
+            
+            if t1_nan_count > 0:
+                print(f"⚠ First table contains {t1_nan_count} rows with NaN coordinates")
+            
+            if t2_nan_count > 0:
+                print(f"⚠ Second table contains {t2_nan_count} rows with NaN coordinates")
+            
+            # Create SkyCoord objects
+            if t1_nan_count > 0:
+                # Handle NaN values by creating a masked array
+                valid_t1_mask = ~t1_nan_mask
+                t1_coords = SkyCoord(
+                    ra=t1_ra[valid_t1_mask]*u.deg, 
+                    dec=t1_dec[valid_t1_mask]*u.deg, 
+                    frame='icrs'
+                )
+            else:
+                t1_coords = SkyCoord(ra=t1_ra*u.deg, dec=t1_dec*u.deg, frame='icrs')
+            
+            if t2_nan_count > 0:
+                # Handle NaN values by creating a masked array
+                valid_t2_mask = ~t2_nan_mask
+                t2_coords = SkyCoord(
+                    ra=t2_ra[valid_t2_mask]*u.deg, 
+                    dec=t2_dec[valid_t2_mask]*u.deg, 
+                    frame='icrs'
+                )
+            else:
+                t2_coords = SkyCoord(ra=t2_ra*u.deg, dec=t2_dec*u.deg, frame='icrs')
+            
+            # Use valid data for t1 and t2
+            t1_subset = t1[~t1_nan_mask] if t1_nan_count > 0 else t1
+            t2_subset = t2[~t2_nan_mask] if t2_nan_count > 0 else t2
+    
+    except Exception as e:
+        raise
+    
+    # Perform coordinate matching
+    match_start = time.time()
+    
+    try:
+        idx, sep2d, _ = t2_coords.match_to_catalog_sky(t1_coords)
+        match_time = time.time() - match_start
+    except Exception as e:
+        raise
+    
+    # Apply separation filter
+    matched_mask = sep2d < sep * u.arcsec
+    match_count = np.sum(matched_mask)
+    
+    
+    if match_count == 0:
+        
+        # Return empty table with appropriate structure
+        merged_cols = t2.colnames + t1.colnames + [f"{match_prefix}sep"]
+        merged_table = Table(names=merged_cols, dtype=[t2.dtype[col] for col in t2.colnames] + 
+                                                       [t1.dtype[col] for col in t1.colnames] + 
+                                                       [float])
+        return merged_table
+    
+    # Get matched rows from both tables
+    if t2_nan_count > 0:
+        df_matched = t2_subset[matched_mask]
+    else:
+        df_matched = t2[matched_mask]
+        
+    tab_selection_matched = t1_subset[idx[matched_mask]]
+    
+    # Combine matched rows
+    try:
+        # Resolve column conflicts
+        t1_cols = set(tab_selection_matched.colnames)
+        t2_cols = set(df_matched.colnames)
+        common_cols = t1_cols.intersection(t2_cols)
+        
+        if common_cols:
+            
+            # Rename columns in second table to avoid conflicts
+            for col in common_cols:
+                if col not in t1_coord_cols and col not in t2_coord_cols:
+                    df_matched.rename_column(col, f"{col}_2")
+        
+        # Stack the tables horizontally
+        merged_table = hstack([df_matched, tab_selection_matched])
+        
+        # Add match quality information
+        merged_table[f"{match_prefix}sep"] = sep2d[matched_mask].to(u.arcsec)
+        
+        # Add metadata if requested
+        if add_metadata:
+            merged_table.meta["MERGETYP"] = "INNER"
+            merged_table.meta["MERGESEP"] = sep
+            merged_table.meta["MERGECNT"] = match_count
+            merged_table.meta["MERGEDAT"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+        
+        # Final report
+        elapsed = time.time() - start_time
+        print(f"✓ Inner merge completed in {elapsed:.2f} seconds")
+        print(f"  ↳ Result table: {len(merged_table)} rows, {len(merged_table.colnames)} columns")
+        
+        return merged_table
+        
+    except Exception as e:
+        raise
+
 # Suppress minor warnings from matplotlib or astroquery (if imported)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -64,8 +260,6 @@ def main():
         publicdata=True
     )
 
-    # Save S-PLUS results to CSV
-    splus_tab.write("../data/splus_dr4.csv", overwrite=True)
 
     print("Querying Gaia DR3 astrometric and photometric data...")
 
@@ -87,9 +281,23 @@ def main():
 
     # Get Gaia results and save to CSV
     r = job.get_results()
-    r.write("../data/gaia_dr3.csv", overwrite=True)
 
-    return r
+    print("Cross-matching S-PLUS and Gaia catalogs...")
+    # Cross-match S-PLUS and Gaia sources using inner merge
+
+    # Perform inner merge based on coordinates
+    splus_gaia = inner_merge_tables(
+        splus_tab,
+        r,
+        t1_coord_cols=["RA", "DEC"],
+        t2_coord_cols=["ra", "dec"],
+        sep=1,
+        add_metadata=True,
+    )
+
+    splus_gaia.write("../data/splus_gaia.csv", overwrite=True, format="csv")
+    
+    return splus_gaia
 
 # Run the main function
 if __name__ == "__main__":

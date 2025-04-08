@@ -41,7 +41,8 @@ def main():
     # Load Gaia DR3 catalog from LSDB via HATS structure
     gaia = lsdb.read_hats(
         path='https://data.lsdb.io/hats/gaia_dr3/gaia', 
-        margin_cache='https://data.lsdb.io/hats/gaia_dr3/gaia_10arcs'
+        margin_cache='https://data.lsdb.io/hats/gaia_dr3/gaia_10arcs',
+        columns=["teff_gsphot"]
     )
 
     print("Cross-matching S-PLUS and Gaia catalogs...")
